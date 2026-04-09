@@ -365,9 +365,14 @@ async def mcp(request: dict) -> JSONResponse:
 
 
 # ---------------------------------------------------------------------------
-# Dev entry point
+# Main entry point
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for running the server."""
     import uvicorn
-    uvicorn.run("server:app", host="0.0.0.0", port=7860, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=7860, reload=False)
+
+
+if __name__ == "__main__":
+    main()
