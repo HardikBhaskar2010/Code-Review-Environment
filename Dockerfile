@@ -1,30 +1,21 @@
-# Dockerfile for CodeReview RL Environment
-# Builds a containerized FastAPI server for Hugging Face Spaces
-
-FROM python:3.11-slim
+FROM python:3.11.9-slim-bookworm
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first for better caching
+# Install dependencies first (layer cache friendly)
 COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Expose port
+# Health check (matches echo_env pattern — pure Python, no curl needed)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health')" || exit 1
+
+# HF Spaces expects port 7860; openenv.yaml declares port: 7860
 EXPOSE 7860
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:7860/health || exit 1
-
-# Run the server using server.py which handles imports correctly
-CMD ["python", "server.py"]
+# Entry point matches openenv.yaml app: server:app
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7860"]

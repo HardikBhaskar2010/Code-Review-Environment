@@ -6,7 +6,7 @@ description: Multi-step RL environment simulating code review and pull request m
 type: space
 runtime: fastapi
 
-app: server.app:app
+app: server:app
 port: 7860
 
 tasks:
