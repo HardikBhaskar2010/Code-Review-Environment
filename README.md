@@ -6,7 +6,7 @@ colorTo: blue
 sdk: docker
 pinned: false
 license: mit
-short_description: OpenEnv environment for AI-driven code review and PR management
+short_description: AI code review and PR management environment
 ---
 
 # 🔍 CodeReview RL Environment
