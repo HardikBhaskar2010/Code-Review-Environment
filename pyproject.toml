@@ -27,7 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-server = "server:main"
+server = "app:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
