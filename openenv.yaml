@@ -1,0 +1,22 @@
+spec_version: 1
+
+name: codereview_env
+description: Multi-step RL environment simulating code review and pull request management with bug detection, severity assessment, and approval workflows.
+
+type: space
+runtime: fastapi
+
+app: server.app:app
+port: 7860
+
+tasks:
+  - easy
+  - medium
+  - hard
+
+tags:
+  - reinforcement-learning
+  - openenv
+  - code-review
+  - pull-requests
+  - evaluation
