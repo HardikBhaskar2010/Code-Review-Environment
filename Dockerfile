@@ -10,6 +10,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # Copy application code
 COPY . .
 
+# Set PYTHONPATH to include /app so imports work
+ENV PYTHONPATH=/app
+
 # Health check (matches echo_env pattern — pure Python, no curl needed)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health')" || exit 1
