@@ -20,5 +20,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 # HF Spaces expects port 7860; openenv.yaml declares port: 7860
 EXPOSE 7860
 
-# Entry point matches openenv.yaml app: server:app
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "7860"]
+# Use start.py for better error messages
+CMD ["python", "start.py"]
