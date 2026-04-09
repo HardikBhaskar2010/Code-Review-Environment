@@ -18,7 +18,13 @@ Runs on:  uvicorn server.app:app --host 0.0.0.0 --port 7860
 
 from __future__ import annotations
 
+import sys
+import os
 import json
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
