@@ -174,10 +174,11 @@ class CodeReviewEnv:
 
     def grade_episode(self) -> float:
         """
-        Deterministic 0.0–1.0 grade for the completed episode.
+        Deterministic grade for the completed episode.
 
         score = PRs_handled_correctly / total_PRs
-        Clamped strictly to [0.0, 1.0]. No randomness.
+        Returns strictly open interval (0.001, 0.999) — validator requires
+        scores strictly between 0 and 1, never exactly 0.0 or 1.0.
         """
         total   = len(self.prs)
         correct = 0
@@ -189,8 +190,9 @@ class CodeReviewEnv:
                 correct += 1
             elif not truth.get("is_clean") and pr["status"] == "changes_requested":
                 correct += 1
-        score = correct / total if total > 0 else 0.0
-        return float(_clamp(score))
+        raw = correct / total if total > 0 else 0.0
+        return float(min(0.999, max(0.001, raw)))
+
 
     def state_snapshot(self) -> Dict[str, Any]:
         """Return full environment state for debugging / /state endpoint."""

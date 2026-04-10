@@ -19,6 +19,16 @@ Scores are always:
 from __future__ import annotations
 from typing import List, Dict, Any
 
+# Scores must be strictly inside the open interval (0, 1).
+# The validator rejects exactly 0.0 and exactly 1.0.
+SCORE_MIN = 0.001
+SCORE_MAX = 0.999
+
+
+def _open(val: float) -> float:
+    """Clamp to open interval (SCORE_MIN, SCORE_MAX)."""
+    return float(min(SCORE_MAX, max(SCORE_MIN, val)))
+
 
 # ---------------------------------------------------------------------------
 # Core grading function
@@ -60,7 +70,7 @@ def grade(
             correct += 1
 
     raw = correct / total
-    return float(min(1.0, max(0.0, raw)))
+    return _open(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +115,8 @@ def grade_task(task: str, env_state: Dict[str, Any]) -> float:
     grader = GRADERS.get(task)
     if grader is None:
         raise ValueError(f"Unknown task {task!r}. Valid tasks: {list(GRADERS)}")
-    return grader(env_state)
+    score = grader(env_state)
+    return _open(score)   # enforce open interval at dispatcher level too
 
 
 # ---------------------------------------------------------------------------
