@@ -23,6 +23,7 @@ from env.env import CodeReviewEnv, Action, Observation, Reward
 from tasks.easy import EASY_SCENARIO
 from tasks.medium import MEDIUM_SCENARIO
 from tasks.hard import HARD_SCENARIO
+from grader import grade_task
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -82,15 +83,29 @@ class StepResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _render_prompt(obs_raw: dict) -> str:
-    """Render observation into human-readable prompt."""
+    """Render observation into human-readable prompt for agent."""
     lines: list[str] = ["# CodeReview Dashboard\n"]
 
-    prs = obs_raw.get("pull_requests", [])
-    lines.append(f"**Pending reviews:** {obs_raw.get('pending_reviews', 0)}/{len(prs)}")
-    lines.append(f"**Step:** {obs_raw.get('step', 0)}  |  **Review pressure:** {obs_raw.get('review_pressure', 0.0):.0%}\n")
+    prs     = obs_raw.get("pull_requests", [])
+    step    = obs_raw.get("step", 0)
+    remain  = obs_raw.get("steps_remaining", 0)
+    pending = obs_raw.get("pending_reviews", 0)
+    pressure = obs_raw.get("review_pressure", 0.0)
+
+    lines.append(f"**Pending reviews:** {pending}/{len(prs)}")
+    lines.append(
+        f"**Step:** {step}  |  **Steps remaining:** {remain}  "
+        f"|  **Review pressure:** {pressure:.0%}\n"
+    )
+    lines.append(
+        f"**Cumulative reward:** {obs_raw.get('cumulative_reward', 0.0):+.4f}\n"
+    )
 
     for pr in prs:
         status_tag = f"[{pr['status'].upper()}]"
+        dep_str = ""
+        if pr.get("dependencies"):
+            dep_str = f"  \nDepends on: PR {', '.join(map(str, pr['dependencies']))}"
         lines.append(
             f"---\n"
             f"**PR #{pr['id']}** {status_tag}  \n"
@@ -98,19 +113,17 @@ def _render_prompt(obs_raw: dict) -> str:
             f"Author: {pr['author']}  \n"
             f"Description: {pr['description']}  \n"
             f"Files: {', '.join(pr['files_changed'])}"
+            f"{dep_str}"
         )
-        
+
         if pr.get("code_diff"):
             lines.append(f"\nCode diff:\n```diff\n{pr['code_diff']}\n```")
-        
+
         if pr.get("flagged_issues"):
             lines.append(f"Flagged issues: {', '.join(pr['flagged_issues'])}")
-        
+
         if pr.get("severity"):
             lines.append(f"Severity: {pr['severity']}")
-        
-        if pr.get("dependencies"):
-            lines.append(f"Depends on: PR {', '.join(map(str, pr['dependencies']))}")
 
     if obs_raw.get("code_standards"):
         lines.append("\n## Code Standards")
@@ -123,7 +136,8 @@ def _render_prompt(obs_raw: dict) -> str:
         "```json\n"
         '{"action": "<action_name>", "pr_id": <int|null>, "value": "<str|null>"}\n'
         "```\n"
-        "Valid actions: analyze_code, flag_issue, set_severity, request_changes, approve_pr, verify_fix"
+        "Valid actions: analyze_code, flag_issue, set_severity, "
+        "request_changes, approve_pr, verify_fix"
     )
 
     return "\n".join(lines)
@@ -228,8 +242,31 @@ async def step(action: Action) -> StepResult:
 
 @app.get("/state", summary="Get current environment state")
 async def state() -> JSONResponse:
-    """Full environment state snapshot."""
-    return JSONResponse(content=env.state_snapshot())
+    """Full environment state snapshot (includes ground_truth for grader)."""
+    snapshot = env.state_snapshot()
+    # Attach ground_truth so external grader.py can score without env internals
+    snapshot["ground_truth"] = env.ground_truth
+    return JSONResponse(content=snapshot)
+
+
+@app.get("/grade", summary="Get deterministic episode grade")
+async def grade_endpoint(
+    task: str = Query(default="easy", enum=["easy", "medium", "hard"])
+) -> JSONResponse:
+    """
+    Returns a deterministic 0.0–1.0 grade for the current episode.
+    Call after the episode is done (or any time) to evaluate performance.
+    """
+    snapshot = env.state_snapshot()
+    snapshot["ground_truth"] = env.ground_truth
+    score = grade_task(task, snapshot)
+    return JSONResponse(content={
+        "task":           task,
+        "score":          score,
+        "episode_grade":  score,
+        "steps_taken":    env.step_count,
+        "done":           snapshot["done"],
+    })
 
 
 @app.get("/health", include_in_schema=False)
@@ -244,10 +281,12 @@ async def metadata():
         "name": "codereview_env",
         "description": (
             "Multi-step Reinforcement Learning environment simulating code review "
-            "and pull request management. Agent analyzes code, identifies bugs, "
-            "sets severity, and approves or requests changes across three difficulty levels."
+            "and incident triage. Agent analyzes PRs, detects bugs and security issues, "
+            "sets severity, handles PR dependencies, and manages SLA deadlines. "
+            "Hard task: 5-PR production incident cluster with shared root cause "
+            "requiring optimal ordering and dependency resolution."
         ),
-        "version": "1.0.0",
+        "version": "2.0.0",
         "tasks": list(TASK_MAP.keys()),
         "reward_range": [-1.0, 1.0],
         "author": "hackathon-team",

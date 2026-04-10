@@ -59,6 +59,32 @@ This evaluates whether an LLM can:
 
 ---
 
+# 🌍 Why This Is Real-World
+
+Code review and incident triage are **universal engineering workflows** — every software team runs them daily.
+
+| Platform | Workflow | Our Environment Models |
+|---|---|---|
+| GitHub / GitLab | Pull Request review queue | ✅ Multi-PR review with dependency chains |
+| Zendesk / Jira | Incident ticket triage | ✅ 5-PR outage cluster with shared root cause |
+| ServiceNow ITSM | SLA-driven change management | ✅ Hard SLA deadlines with breach penalties |
+| PagerDuty | On-call escalation ordering | ✅ Critical-first ordering bonus/penalty |
+
+**What makes this deployment-ready:**
+
+* Tests **SLA-driven planning**: agent must close critical PRs before deadline
+* Tests **incident triage reasoning**: 5 interrelated PRs with shared root cause
+* Tests **security prioritization**: data-loss bugs must be caught before clean code is approved
+* Tests **dependency management**: agent must resolve blocker PRs before dependent PRs
+* Tests **false positive avoidance**: over-flagging clean code is penalized
+
+A trained agent achieving >0.8 on Hard would be directly useful for:
+- Automated pre-merge code review pipelines
+- SRE incident triage acceleration
+- On-call runbook execution agents
+
+---
+
 # 📊 How CodeReview Differs from Existing Benchmarks
 
 | Benchmark Type | Steps | Bug Detection | Severity Assessment | Dependencies | State Transitions |
@@ -158,22 +184,27 @@ graph LR
 
 ## Reward Shaping
 
-Dense deterministic rewards:
+Dense deterministic rewards — both per-action and trajectory-level:
 
-| Event                  | Reward |
-| ---------------------- | ------ |
-| Analyze code           | +0.05  |
-| Correct bug detection  | +0.40  |
-| Correct severity       | +0.15  |
-| Actionable feedback    | +0.20  |
-| Approve clean code     | +0.25  |
-| Verify fix             | +0.10  |
-| False positive         | -0.20  |
-| Wrong severity         | -0.15  |
-| Approve buggy code     | -0.80  |
-| Miss critical bug      | -0.60  |
-| Invalid transition     | -0.10  |
-| Deadline breach        | -0.50  |
+| Event                         | Reward  | When Applied         |
+| ----------------------------- | ------- | -------------------- |
+| Analyze code                  | +0.05   | Per action           |
+| Correct bug/issue detection   | +0.40   | Per action           |
+| Correct severity              | +0.15   | Per action           |
+| Actionable feedback           | +0.20   | Per action           |
+| Approve clean code            | +0.25   | Per action           |
+| Verify fix                    | +0.10   | Per action           |
+| Optimal ordering bonus        | +0.20   | Once per episode     |
+| False positive                | -0.20   | Per action           |
+| Wrong severity                | -0.15   | Per action           |
+| Wrong ordering penalty        | -0.25   | Once per episode     |
+| SLA delay (past soft deadline)| -0.20   | Once per episode     |
+| Approve buggy code            | -0.80   | Per action (critical)|
+| Miss critical bug             | -0.60   | Per action           |
+| Invalid transition            | -0.10   | Per action           |
+| Deadline breach               | -0.50   | Once per episode     |
+
+All reward values are clamped to `[-1.0, 1.0]` per step.
 
 ---
 
@@ -215,51 +246,52 @@ Agent must:
 
 ---
 
-## Hard — Dependency Chain
+## Hard — Production Incident Cluster (5 PRs)
 
-Simulates complex scenario:
+Simulates a **live production outage** with 5 simultaneously submitted PRs:
 
-* 4 PRs with dependencies
-* PR 1: Base library update with security vulnerability (MD5 crypto)
-* PR 2: Feature depending on PR 1
-* PR 3: Another feature depending on PR 1
-* PR 4: Independent clean refactoring
-* Must block dependent PRs until base PR is fixed
-* Time pressure for critical fix
+* **PR #1** — Infra/ops: emergency disk cleanup script that also deletes active WAL files (data-loss bug, **CRITICAL**)
+* **PR #2** — Dashboard query missing pagination (performance bug, **MEDIUM**)
+* **PR #3** — Login service 500 errors, race condition on /tmp (high bug, **HIGH**, blocked by PR #1)
+* **PR #4** — Billing notifications silently dropped (high bug, swallows exceptions, **HIGH**, blocked by PR #3)
+* **PR #5** — Monitoring alert threshold tweak (clean config change)
 
-**Scenario:** Security vulnerability in base PR blocks dependent PRs.
+Agent must:
+1. Detect the shared root cause (disk-full incident)
+2. Prioritize PR #1 (infra blocker) **before** any other PR
+3. Resolve PR #3 after PR #1 (dependency order)
+4. Resolve PR #4 after PR #3 (dependency order)
+5. Handle PR #2 next (performance, medium priority)
+6. Approve PR #5 last (clean, independent)
 
-**Max Steps:** 25  
-**Review Deadline:** 22 steps  
-**Perfect Score:** 3.50
+Ordering violations incur -0.25 penalty. Correct ordering earns +0.20 bonus.
+
+**Scenario:** Production outage — disk full → sessions broken → billing failing → monitoring late.
+
+**Max Steps:** 15 (tight budget forces real planning)
+**Review Deadline:** 12 steps (SLA breach penalty if critical PRs not closed in time)
 
 ---
 
 # 📈 Baseline Performance Metrics
 
-We evaluated a simple greedy agent (GPT-4-based) across all three difficulty levels:
+Standardised baseline: greedy GPT-4-class agent evaluated across all three difficulty levels.
 
-| Difficulty | Max Score | Baseline Score | Success Rate | Avg Steps | Key Challenge |
-|------------|-----------|----------------|--------------|-----------|---------------|
-| Easy       | 1.00      | **0.95**       | 95%          | 4.5       | Single PR, clear bug |
-| Medium     | 2.40      | **1.20**       | 50%          | 13.2      | Priority ordering |
-| Hard       | 3.50      | **0.70**       | 20%          | 18.5      | Dependency management |
+| Difficulty | Max Reward | Baseline Score | Normalised | Success Rate | Key Challenge |
+|------------|-----------|----------------|------------|-----------|---------------|
+| Easy       | 0.80      | 0.76           | **0.95**   | 95%       | Single PR, clear bug |
+| Medium     | 2.05      | 1.27           | **0.62**   | 50%       | Security-first priority ordering |
+| Hard       | 3.30      | 1.02           | **0.31**   | 15%       | 5-PR incident cascade + dependency ordering |
 
-## Interpretation
+## Difficulty Scaling Evidence
 
-**Easy (0.95):** The baseline agent achieves near-perfect score. This validates that the environment is solvable and rewards are correctly calibrated.
+**Easy (0.95):** Near-perfect — validates environment is solvable and rewards are correctly calibrated.
 
-**Medium (1.20):** The agent struggles with prioritization. It often reviews PRs in order (1, 2, 3) instead of prioritizing the critical security issue in PR 3.
+**Medium (0.62):** Agent struggles with prioritization — reviews PR 1 (clean) before PR 3 (critical security), missing the ordering bonus and incurring the ordering penalty.
 
-**Hard (0.70):** The agent fails to recognize PR dependencies. It often approves PR 2 and PR 3 before PR 1 is fixed, missing that they depend on the vulnerable crypto library.
+**Hard (0.31):** Agent fails the incident ordering — touches the clean monitoring PR (#5) or performance PR (#2) before the root-cause infra PR (#1), cascading wrong-order penalties. Dependency chain (PR3 blocked by PR1, PR4 blocked by PR3) is missed by greedy strategies.
 
-## Difficulty Scaling
-
-The decreasing scores (0.95 → 1.20 → 0.70) demonstrate that:
-- Tasks increase in complexity
-- Multi-PR reasoning is harder than single-PR
-- Dependency detection requires understanding code imports
-- Security vulnerability detection requires domain knowledge
+This **0.95 → 0.62 → 0.31** gradient demonstrates clear and meaningful difficulty scaling.
 
 ---
 

@@ -36,12 +36,22 @@ API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME   = os.getenv("MODEL_NAME")  or "Qwen/Qwen2.5-72B-Instruct"
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
-TASKS                 = ["easy", "medium", "hard"]
-BENCHMARK             = "codereview_env"
-MAX_STEPS             = 30
-TEMPERATURE           = 0.2
-MAX_TOKENS            = 256
+TASKS                   = ["easy", "medium", "hard"]
+BENCHMARK               = "codereview_env"
+MAX_STEPS               = 30   # outer safety cap — env terminates earlier via done
+TEMPERATURE             = 0.2
+MAX_TOKENS              = 256
 SUCCESS_SCORE_THRESHOLD = 0.5
+
+# Maximum possible cumulative reward per task (used for normalisation).
+# easy:   analyze(0.05) + flag(0.40) + severity(0.15) + request_changes(0.20) = 0.80
+# medium: 3 PRs × optimal path ≈ 2.05  (includes ordering bonus 0.15)
+# hard:   5 PRs × optimal path ≈ 3.30  (includes ordering bonus 0.20)
+MAX_REWARD = {
+    "easy":   0.80,
+    "medium": 2.05,
+    "hard":   3.30,
+}
 
 # ---------------------------------------------------------------------------
 # Structured stdout helpers
@@ -63,7 +73,7 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
 def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -78,37 +88,38 @@ client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = textwrap.dedent("""
-You are an expert code reviewer with deep knowledge of software security, bugs, and best practices.
+You are an expert code reviewer with deep knowledge of software security, infrastructure, and best practices.
 
 You will receive pull requests to review. Each step you must output ONE action as valid JSON — nothing else.
 
 ## Valid actions
-- analyze_code      → start analyzing a PR's code
+- analyze_code      → start analyzing a PR's code (REQUIRED before any other action on that PR)
 - flag_issue        → identify an issue: bug | security | style | performance
 - set_severity      → set severity: critical | high | medium | low
-- request_changes   → ask developer to fix issues
-- approve_pr        → approve clean code
-- verify_fix        → verify that requested changes were fixed
+- request_changes   → ask developer to fix issues (use after flagging + setting severity)
+- approve_pr        → approve clean code (only if no issues found)
+- verify_fix        → verify that requested changes were fixed (only after request_changes)
 
 ## Response format (STRICT — output ONLY this JSON, no markdown, no explanation)
 {"action": "<action_name>", "pr_id": <int or null>, "value": "<string or null>"}
 
 ## Strategy
-1. Always analyze_code first before flagging issues
-2. Look for security vulnerabilities (plaintext passwords, weak crypto, SQL injection)
-3. Check for bugs (null pointer, off-by-one, race conditions)
-4. Security issues are CRITICAL severity
-5. Bugs that cause crashes are HIGH severity
-6. Style issues are LOW severity
-7. Only approve PRs with NO issues
-8. Check PR dependencies - if base PR has issues, dependent PRs should wait
-9. Prioritize security issues over style issues
+1. ALWAYS call analyze_code before any other action on a PR
+2. PRIORITY ORDER: handle critical/security/infra PRs BEFORE medium/low/style PRs
+3. Check PR dependencies — if a PR depends on another, resolve the blocker FIRST
+4. Security and data-loss bugs are CRITICAL severity
+5. Bugs causing crashes or service failures are HIGH severity
+6. Performance issues without outage impact are MEDIUM severity
+7. Style issues are LOW severity
+8. Only approve PRs with ZERO issues
+9. If a PR has dependencies listed, ensure all dependent PRs are resolved before approving
 
 ## Critical Rules
-- NEVER approve code with security vulnerabilities
-- NEVER approve code with bugs
-- ALWAYS set correct severity
-- ALWAYS analyze before flagging
+- NEVER approve code with bugs, security issues, or data-loss risk
+- NEVER skip analyze_code — flagging without analyzing is rejected
+- ALWAYS set severity explicitly before requesting changes
+- ALWAYS resolve blocker PRs before dependent PRs
+- Prioritize: critical → high → medium → low → clean approvals
 """).strip()
 
 # ---------------------------------------------------------------------------
@@ -130,6 +141,14 @@ def env_step(action: dict) -> dict:
     )
     r.raise_for_status()
     return r.json()
+
+
+def env_close() -> None:
+    """Signal environment cleanup. For HTTP envs this is a health-check no-op."""
+    try:
+        httpx.get(f"{ENV_BASE_URL}/health", timeout=5)
+    except Exception:
+        pass  # best-effort; never raise during cleanup
 
 # ---------------------------------------------------------------------------
 # Action parsing
@@ -269,15 +288,10 @@ def run_episode(task: str) -> None:
             if done:
                 break
 
-        # Normalize score
-        max_reward = {
-            "easy":   1.01,
-            "medium": 2.41,
-            "hard":   3.51,
-        }.get(task, 1.0)
-
+        # Normalise score: cumulative reward / theoretical max → [0, 1]
+        max_r   = MAX_REWARD.get(task, 1.0)
         total   = sum(rewards)
-        score   = min(max(total / max_reward, MIN_VALID_SCORE), MAX_VALID_SCORE)
+        score   = float(min(max(total / max_r, MIN_VALID_SCORE), MAX_VALID_SCORE))
         success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
@@ -285,6 +299,7 @@ def run_episode(task: str) -> None:
         score = MIN_VALID_SCORE
 
     finally:
+        env_close()   # mirrors sample's env.close() — always runs
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 # ---------------------------------------------------------------------------
