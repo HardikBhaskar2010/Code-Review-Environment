@@ -222,9 +222,13 @@ def get_model_action(prompt: str, history: List[str]) -> str:
 # ---------------------------------------------------------------------------
 
 def run_episode(task: str) -> None:
-    # Score validation constants - ensure scores are in open interval (0, 1)
-    MIN_VALID_SCORE = 0.002
-    MAX_VALID_SCORE = 0.998
+    # Scores must survive score:.2f formatting and still be strictly in (0, 1).
+    # 0.002 rounds to '0.00' → parsed as 0.0 → REJECTED by validator.
+    # 0.998 rounds to '1.00' → parsed as 1.0 → REJECTED by validator.
+    # 0.01  rounds to '0.01' → parsed as 0.01 → ACCEPTED. ✓
+    # 0.99  rounds to '0.99' → parsed as 0.99 → ACCEPTED. ✓
+    MIN_VALID_SCORE = 0.01
+    MAX_VALID_SCORE = 0.99
     
     rewards:      List[float] = []
     steps_taken:  int         = 0

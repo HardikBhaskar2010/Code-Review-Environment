@@ -191,7 +191,8 @@ class CodeReviewEnv:
             elif not truth.get("is_clean") and pr["status"] == "changes_requested":
                 correct += 1
         raw = correct / total if total > 0 else 0.0
-        return float(min(0.999, max(0.001, raw)))
+        return float(min(0.99, max(0.01, raw)))
+
 
 
     def state_snapshot(self) -> Dict[str, Any]:

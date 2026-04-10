@@ -19,10 +19,13 @@ Scores are always:
 from __future__ import annotations
 from typing import List, Dict, Any
 
-# Scores must be strictly inside the open interval (0, 1).
-# The validator rejects exactly 0.0 and exactly 1.0.
-SCORE_MIN = 0.001
-SCORE_MAX = 0.999
+# Scores must survive score:.2f formatting and remain strictly in (0, 1).
+# 0.001 → '0.00' with .2f → parsed as 0.0 → REJECTED.
+# 0.999 → '1.00' with .2f → parsed as 1.0 → REJECTED.
+# 0.01  → '0.01' with .2f → parsed as 0.01 → ACCEPTED. ✓
+# 0.99  → '0.99' with .2f → parsed as 0.99 → ACCEPTED. ✓
+SCORE_MIN = 0.01
+SCORE_MAX = 0.99
 
 
 def _open(val: float) -> float:
@@ -53,7 +56,7 @@ def grade(
         0.0 = all PRs handled incorrectly
     """
     if not pull_requests:
-        return 0.0
+        return _open(0.0)  # never return bare 0.0 — bypasses open-interval clamp
 
     truth_map: Dict[int, Dict[str, Any]] = {t["id"]: t for t in ground_truth}
     correct = 0
